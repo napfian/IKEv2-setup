@@ -101,30 +101,6 @@ TZONE=${TZONE:-'Europe/London'}
 
 read -r -p "Email address for sysadmin (e.g. j.bloggs@example.com): " EMAILADDR
 
-read -r -p "Desired SSH log-in port (default: 22): " SSHPORT
-SSHPORT=${SSHPORT:-22}
-
-read -r -p "New SSH log-in user name: " LOGINUSERNAME
-
-CERTLOGIN="n"
-if [[ -s /root/.ssh/authorized_keys ]]; then
-  while true; do
-    read -r -p "Copy /root/.ssh/authorized_keys to new user and disable SSH password log-in [Y/n]? " CERTLOGIN
-    [[ ${CERTLOGIN,,} =~ ^(y(es)?)?$ ]] && CERTLOGIN=y
-    [[ ${CERTLOGIN,,} =~ ^no?$ ]] && CERTLOGIN=n
-    [[ $CERTLOGIN =~ ^(y|n)$ ]] && break
-  done
-fi
-
-while true; do
-  [[ ${CERTLOGIN} = "y" ]] && read -r -s -p "New SSH user's password (e.g. for sudo): " LOGINPASSWORD
-  [[ ${CERTLOGIN} != "y" ]] && read -r -s -p "New SSH user's log-in password (must be REALLY STRONG): " LOGINPASSWORD
-  echo
-  read -r -s -p "Confirm new SSH user's password: " LOGINPASSWORD2
-  echo
-  [[ "${LOGINPASSWORD}" = "${LOGINPASSWORD2}" ]] && break
-  echo "Passwords didn't match -- please try again"
-done
 
 VPNIPPOOL="10.101.0.0/16"
 
@@ -178,10 +154,6 @@ iptables -A INPUT -m state --state INVALID -j DROP
 # rate-limit repeated new requests from same IP to any ports
 iptables -I INPUT -i "${ETH0ORSIMILAR}" -m state --state NEW -m recent --set
 iptables -I INPUT -i "${ETH0ORSIMILAR}" -m state --state NEW -m recent --update --seconds 300 --hitcount 60 -j DROP
-
-# accept (non-standard) SSH
-iptables -A INPUT -p tcp --dport "${SSHPORT}" -j ACCEPT
-
 
 # VPN
 
@@ -312,42 +284,6 @@ ${VPNUSERNAME} : EAP \"${VPNPASSWORD}\"
 
 ipsec restart
 
-
-echo
-echo "--- User ---"
-echo
-
-# user + SSH
-
-id -u "${LOGINUSERNAME}" &>/dev/null || adduser --disabled-password --gecos "" "${LOGINUSERNAME}"
-echo "${LOGINUSERNAME}:${LOGINPASSWORD}" | chpasswd
-adduser "${LOGINUSERNAME}" sudo
-
-sed -r \
--e "s/^#?Port 22$/Port ${SSHPORT}/" \
--e 's/^#?LoginGraceTime (120|2m)$/LoginGraceTime 30/' \
--e 's/^#?PermitRootLogin yes$/PermitRootLogin no/' \
--e 's/^#?X11Forwarding yes$/X11Forwarding no/' \
--e 's/^#?UsePAM yes$/UsePAM no/' \
--i.original /etc/ssh/sshd_config
-
-if [[ $CERTLOGIN = "y" ]]; then
-  mkdir -p "/home/${LOGINUSERNAME}/.ssh"
-  chown "${LOGINUSERNAME}" "/home/${LOGINUSERNAME}/.ssh"
-  chmod 700 "/home/${LOGINUSERNAME}/.ssh"
-
-  cp "/root/.ssh/authorized_keys" "/home/${LOGINUSERNAME}/.ssh/authorized_keys"
-  chown "${LOGINUSERNAME}" "/home/${LOGINUSERNAME}/.ssh/authorized_keys"
-  chmod 600 "/home/${LOGINUSERNAME}/.ssh/authorized_keys"
-
-  sed -r \
-  -e "s/^#?PasswordAuthentication yes$/PasswordAuthentication no/" \
-  -i.allows_pwd /etc/ssh/sshd_config
-fi
-
-service ssh restart
-
-
 echo
 echo "--- Timezone, mail, unattended upgrades ---"
 echo
@@ -364,7 +300,6 @@ sed -r \
 grep -Fq 'jawj/IKEv2-setup' /etc/aliases || echo "
 # https://github.com/jawj/IKEv2-setup
 root: ${EMAILADDR}
-${LOGINUSERNAME}: ${EMAILADDR}
 " >> /etc/aliases
 
 newaliases
@@ -391,7 +326,7 @@ echo
 echo "--- Creating configuration files ---"
 echo
 
-cd "/home/${LOGINUSERNAME}"
+cd "/home/ubuntu"
 
 cat << EOF > vpn-ios.mobileconfig
 <?xml version='1.0' encoding='UTF-8'?>
@@ -773,7 +708,7 @@ EMAIL=$USER@$VPNHOST mutt -s "VPN configuration" -a vpn-ios.mobileconfig vpn-mac
 echo
 echo "--- How to connect ---"
 echo
-echo "Connection instructions have been emailed to you, and can also be found in your home directory, /home/${LOGINUSERNAME}"
+echo "Connection instructions have been emailed to you, and can also be found in your home directory, /home/ubuntu"
 
 # necessary for IKEv2?
 # Windows: https://support.microsoft.com/en-us/kb/926179
